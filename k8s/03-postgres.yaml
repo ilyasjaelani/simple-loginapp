@@ -1,0 +1,123 @@
+##############################################################################
+# PersistentVolumeClaim — data storage for PostgreSQL
+##############################################################################
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: prodia
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path   # uncomment & set for your cloud provider
+
+---
+##############################################################################
+# ConfigMap — DB init SQL
+##############################################################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-sql
+  namespace: prodia
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      name          VARCHAR(100)  NOT NULL,
+      email         VARCHAR(150)  UNIQUE NOT NULL,
+      password_hash VARCHAR(255)  NOT NULL,
+      created_at    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+    );
+
+---
+##############################################################################
+# StatefulSet — PostgreSQL
+##############################################################################
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prodia-postgres
+  namespace: prodia
+  labels:
+    app: prodia-postgres
+spec:
+  serviceName: prodia-postgres-svc
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prodia-postgres
+  template:
+    metadata:
+      labels:
+        app: prodia-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: prodia-config
+                  key: DB_NAME
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: prodia-config
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: prodia-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "prodia_user", "-d", "prodia_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "prodia_user", "-d", "prodia_db"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init-sql
+          configMap:
+            name: postgres-init-sql
+
+---
+##############################################################################
+# Service — ClusterIP (only accessible within cluster)
+##############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: prodia-postgres-svc
+  namespace: prodia
+spec:
+  selector:
+    app: prodia-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None   # headless service — StatefulSet best practice
