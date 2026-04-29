@@ -207,8 +207,9 @@ spec:
   ports:
     - port: 5001
       targetPort: 5001
+      nodePort: 30501
   # Ganti ke NodePort atau LoadBalancer jika perlu akses eksternal langsung
-  type: ClusterIP
+  type: NodePort
 
 ---
 # ── Frontend Deployment ──────────────────────────────────────────────────────
@@ -236,8 +237,8 @@ spec:
           env:
             - name: NODE_ENV
               value: "production"
-            #- name: API_BASE
-            #  value: "http://182.23.45.203:5001/api"
+            - name: API_BASE
+              value: "http://172.16.25.204:30501/api"
             - name: PORT
               value: "5000"
             - name: BACKEND_URL
