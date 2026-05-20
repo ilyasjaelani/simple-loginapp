@@ -137,14 +137,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "⚠️ No changes to commit"
           else
-            COMMIT_MSG="🚀 Update image tags to ${SHORT_SHA}
-
-
-Automated update by GitHub Actions
-- Frontend: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${SHORT_SHA}
-- Backend: ghcr.io/ilyasjaelani/simple-loginapp-backend:${SHORT_SHA}"
-
-            git commit -m "${COMMIT_MSG}"
+            git commit -m "$(printf '🚀 Update image tags to %s\n\nAutomated update by GitHub Actions\n- Frontend: ghcr.io/ilyasjaelani/simple-loginapp-frontend:%s\n- Backend: ghcr.io/ilyasjaelani/simple-loginapp-backend:%s' "${SHORT_SHA}" "${SHORT_SHA}" "${SHORT_SHA}")"
             
             git push
             echo "✅ Successfully pushed changes to GitOps repository"
