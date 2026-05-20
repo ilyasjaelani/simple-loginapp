@@ -21,8 +21,6 @@ jobs:
       packages: write
       
     outputs:
-      frontend-tag: ${{ steps.meta-frontend.outputs.tags }}
-      backend-tag: ${{ steps.meta-backend.outputs.tags }}
       short-sha: ${{ steps.vars.outputs.short-sha }}
 
     steps:
@@ -55,7 +53,6 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
-            type=semver,pattern={{version}}
 
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
@@ -77,7 +74,6 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
-            type=semver,pattern={{version}}
 
       - name: Build and push Backend image
         uses: docker/build-push-action@v5
@@ -91,6 +87,7 @@ jobs:
 
       - name: Image digest
         run: |
+          echo "✅ Images built and pushed successfully!"
           echo "Frontend: ${{ steps.meta-frontend.outputs.tags }}"
           echo "Backend: ${{ steps.meta-backend.outputs.tags }}"
 
@@ -111,27 +108,41 @@ jobs:
         run: |
           SHORT_SHA=${{ needs.build-and-push.outputs.short-sha }}
           
+          echo "Updating image tags to: ${SHORT_SHA}"
+          
           # Update frontend image tag
-          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${SHORT_SHA}|g" apps/simple-loginapp/frontend-deployment.yaml
+          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${SHORT_SHA}|g" apps/simple-loginapp/frontend.yaml
           
           # Update backend image tag
-          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:${SHORT_SHA}|g" apps/simple-loginapp/backend-deployment.yaml
+          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:${SHORT_SHA}|g" apps/simple-loginapp/backend.yaml
           
-          echo "Updated image tags to: ${SHORT_SHA}"
+          echo "✅ Updated image tags"
+          
+          # Show changes
+          echo "=== Changes to frontend.yaml ==="
+          grep "image: ghcr.io" apps/simple-loginapp/frontend.yaml
+          
+          echo "=== Changes to backend.yaml ==="
+          grep "image: ghcr.io" apps/simple-loginapp/backend.yaml
 
       - name: Commit and push changes
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add apps/simple-loginapp/*.yaml
+          git add apps/simple-loginapp/frontend.yaml apps/simple-loginapp/backend.yaml
           
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "⚠️ No changes to commit"
           else
-            git commit -m "Update image tags to ${{ needs.build-and-push.outputs.short-sha }}"
+            git commit -m "🚀 Update image tags to ${{ needs.build-and-push.outputs.short-sha }}
+
+Automated update by GitHub Actions
+- Frontend: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${{ needs.build-and-push.outputs.short-sha }}
+- Backend: ghcr.io/ilyasjaelani/simple-loginapp-backend:${{ needs.build-and-push.outputs.short-sha }}"
+            
             git push
-            echo "Successfully pushed changes to GitOps repository"
+            echo "✅ Successfully pushed changes to GitOps repository"
           fi
 
   notify:
@@ -140,13 +151,30 @@ jobs:
     if: always()
     
     steps:
-      - name: Send notification
+      - name: Pipeline Summary
         run: |
-          if [ "${{ needs.build-and-push.result }}" == "success" ] && [ "${{ needs.update-gitops.result }}" == "success" ]; then
-            echo "✅ CI/CD Pipeline completed successfully!"
-            echo "🐳 Images built and pushed to ghcr.io"
-            echo "📝 GitOps repository updated with new image tags"
-            echo "🚀 ArgoCD will automatically sync the changes"
+          echo "### 🚀 CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.build-and-push.result }}" == "success" ]; then
+            echo "✅ **Build & Push**: Success" >> $GITHUB_STEP_SUMMARY
+            echo "- Frontend image: \`ghcr.io/ilyasjaelani/simple-loginapp-frontend:${{ needs.build-and-push.outputs.short-sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Backend image: \`ghcr.io/ilyasjaelani/simple-loginapp-backend:${{ needs.build-and-push.outputs.short-sha }}\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ CI/CD Pipeline failed!"
+            echo "❌ **Build & Push**: Failed" >> $GITHUB_STEP_SUMMARY
           fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.update-gitops.result }}" == "success" ]; then
+            echo "✅ **GitOps Update**: Success" >> $GITHUB_STEP_SUMMARY
+            echo "- Repository: \`ilyasjaelani/simple-loginapp-gitops\`" >> $GITHUB_STEP_SUMMARY
+            echo "- Updated files: \`frontend.yaml\`, \`backend.yaml\`" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.update-gitops.result }}" == "skipped" ]; then
+            echo "⏭️ **GitOps Update**: Skipped (not main branch)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **GitOps Update**: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔄 **Next Step**: ArgoCD will automatically sync the changes to Kubernetes cluster" >> $GITHUB_STEP_SUMMARY
