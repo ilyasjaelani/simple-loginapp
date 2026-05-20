@@ -1,0 +1,152 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ilyasjaelani
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      
+    outputs:
+      frontend-tag: ${{ steps.meta-frontend.outputs.tags }}
+      backend-tag: ${{ steps.meta-backend.outputs.tags }}
+      short-sha: ${{ steps.vars.outputs.short-sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up variables
+        id: vars
+        run: |
+          echo "short-sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          echo "date=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and Push Frontend
+      - name: Extract metadata for Frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/simple-loginapp-frontend
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Build and Push Backend
+      - name: Extract metadata for Backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/simple-loginapp-backend
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: |
+          echo "Frontend: ${{ steps.meta-frontend.outputs.tags }}"
+          echo "Backend: ${{ steps.meta-backend.outputs.tags }}"
+
+  update-gitops:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ilyasjaelani/simple-loginapp-gitops
+          token: ${{ secrets.GITOPS_PAT }}
+          ref: main
+
+      - name: Update image tags in manifests
+        run: |
+          SHORT_SHA=${{ needs.build-and-push.outputs.short-sha }}
+          
+          # Update frontend image tag
+          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${SHORT_SHA}|g" apps/simple-loginapp/frontend-deployment.yaml
+          
+          # Update backend image tag
+          sed -i "s|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:.*|image: ghcr.io/ilyasjaelani/simple-loginapp-backend:${SHORT_SHA}|g" apps/simple-loginapp/backend-deployment.yaml
+          
+          echo "Updated image tags to: ${SHORT_SHA}"
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add apps/simple-loginapp/*.yaml
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update image tags to ${{ needs.build-and-push.outputs.short-sha }}"
+            git push
+            echo "Successfully pushed changes to GitOps repository"
+          fi
+
+  notify:
+    needs: [build-and-push, update-gitops]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Send notification
+        run: |
+          if [ "${{ needs.build-and-push.result }}" == "success" ] && [ "${{ needs.update-gitops.result }}" == "success" ]; then
+            echo "✅ CI/CD Pipeline completed successfully!"
+            echo "🐳 Images built and pushed to ghcr.io"
+            echo "📝 GitOps repository updated with new image tags"
+            echo "🚀 ArgoCD will automatically sync the changes"
+          else
+            echo "❌ CI/CD Pipeline failed!"
+          fi
