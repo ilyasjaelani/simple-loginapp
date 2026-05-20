@@ -132,14 +132,19 @@ jobs:
           
           git add apps/simple-loginapp/frontend.yaml apps/simple-loginapp/backend.yaml
           
+          SHORT_SHA="${{ needs.build-and-push.outputs.short-sha }}"
+          
           if git diff --staged --quiet; then
             echo "⚠️ No changes to commit"
           else
-            git commit -m "🚀 Update image tags to ${{ needs.build-and-push.outputs.short-sha }}
+            COMMIT_MSG="🚀 Update image tags to ${SHORT_SHA}
+
 
 Automated update by GitHub Actions
-- Frontend: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${{ needs.build-and-push.outputs.short-sha }}
-- Backend: ghcr.io/ilyasjaelani/simple-loginapp-backend:${{ needs.build-and-push.outputs.short-sha }}"
+- Frontend: ghcr.io/ilyasjaelani/simple-loginapp-frontend:${SHORT_SHA}
+- Backend: ghcr.io/ilyasjaelani/simple-loginapp-backend:${SHORT_SHA}"
+
+            git commit -m "${COMMIT_MSG}"
             
             git push
             echo "✅ Successfully pushed changes to GitOps repository"
